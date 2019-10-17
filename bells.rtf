@@ -1,0 +1,673 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1038\cocoasubrtf320
+{\fonttbl\f0\fnil\fcharset0 Menlo-Regular;}
+{\colortbl;\red255\green255\blue255;\red191\green0\blue0;\red0\green0\blue0;\red0\green0\blue191;
+\red96\green96\blue96;\red0\green115\blue0;}
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\ql\qnatural\pardirnatural
+
+\f0\fs18 \cf2 ////// functions\cf3 \
+(\
+\cf2 // map to Dict of Dicts (sfile id, relid)\cf3 \
+~mapBy_SF_relID = \{ \cf4 |metadata|\cf3 \
+	\cf4 var\cf3  fileMap = \cf4 Dictionary\cf3 [];\
+	(metadata.class == \cf4 Dictionary\cf3 []).if\
+	\{\
+		metadata.keys.asArray.do(\{ \cf4 |unit|\cf3  \
+			\cf4 var\cf3  filenum = metadata[unit][1];\
+			(fileMap[filenum] == \cf4 nil\cf3 ).if\
+			\{\
+				fileMap.add(filenum -> \cf4 Dictionary\cf3 [metadata[unit][2] -> metadata[unit]]);\
+			\} \{\
+				fileMap[filenum].add(metadata[unit][2] -> metadata[unit]);\
+			\};\
+		\});\
+	\} \{	\
+		metadata.do(\{ \cf4 |unit|\cf3  \
+			\cf4 var\cf3  filenum = unit[1];\
+			(fileMap[filenum] == \cf4 nil\cf3 ).if\
+			\{\
+				fileMap.add(filenum -> \cf4 Dictionary\cf3 [unit[2] -> unit]);\
+			\} \{\
+				fileMap[filenum].add(unit[2] -> unit);\
+			\};\
+		\});\
+	\};\
+	fileMap\
+\};\
+)\
+\
+\cf2 ///////////////////////////\cf3 \
+\cf2 // launch server and init + import corpus\cf3 \
+\
+\cf4 Server\cf3 .default = \cf4 Server\cf3 .internal;\
+s = \cf4 Server\cf3 .default.boot;\
+~crps = \cf4 CorpusDB\cf3 .new(\cf5 "bells"\cf3 , s);\
+\
+~crps.importCorpusFromXML(s, \cf5 "/Users/tms/dev/supercollider/bells/xml/bells3.xml"\cf3 )\
+~metadata = ~crps.mapSoundFileUnitsToCorpusUnits;\
+\
+\cf2 // all units, mapped by sfile and rel ids (Dict of Dicts)\cf3 \
+~mappedBySF_RelID = ~mapBy_SF_relID.value(~metadata);\
+\
+\cf2 ////////////////////////////////\cf3 \
+\cf2 // set up search\cf3 \
+(\
+~search3 = \cf4 CorpusSearch\cf3 .new(~crps);\
+~search3.buildTree(\cf4 nil\cf3 , [8,9,10,12,15,0], \cf4 true\cf3 , \cf4 true\cf3 );\
+\
+~nntree = \cf4 Dictionary\cf3 [];\
+~search3.normedTree.do(\{ \cf4 |node|\cf3 \
+	\cf4 var\cf3  res;\
+	[node.label].post; \cf5 ":"\cf3 .postln; \cf2 //, node.location\cf3 \
+	~nntree.add(node.label -> \cf4 List\cf3 []);\
+	res = ~search3.findNNearest(node.location, 0.3, \cf4 true\cf3 , 7);\
+	(res.size > 1).if\
+	\{\
+		res.do(\{ \cf4 |pair|\cf3 \
+			(pair[0].asInteger != node.label.asInteger).if\
+			\{\
+				~nntree[node.label].add(pair[0].asInteger);\
+				pair[0].post; \cf5 " "\cf3 .post;\
+			\};\
+		\});\
+	\} \{\
+		~nntree.add(node.label -> \cf4 nil\cf3 );\
+		\cf4 nil\cf3 .post;\
+	\};\
+	\cf5 " "\cf3 .postln;	\
+\});\
+)\
+~init_tree = \{\
+	~nntree.keysValuesDo(\{ \cf4 |key,val|\cf3  (val != \cf4 nil\cf3 ).if\
+		\{\
+			(val[1].respondsTo(\cf6 \\sum\cf3 )).if\
+			\{\
+				~nntree.add(key -> [val[0].asArray, (1 ! val[0].size).normalizeSum ]);\
+			\} \{\
+				~nntree.add(key -> [val.asArray, (1 ! val.size).normalizeSum ]);\
+			\};\
+		\} \
+	\});\
+\};\
+\
+~init_tree.value;\
+\
+\cf2 ////////////////////////////////\cf3 \
+\cf2 // set up the freezers and the selection logic\cf3 \
+\
+\cf2 // read the scpvs\cf3 \
+~savedSCPVs = [\cf4 Buffer\cf3 .read(s, \cf5 "/Users/tms/dev/supercollider/bells/fft/buffer0.scpv"\cf3 ), \cf4 Buffer\cf3 .read(s, \cf5 "/Users/tms/dev/supercollider/bells/fft/buffer1.scpv"\cf3 ), \cf4 Buffer\cf3 .read(s, \cf5 "/Users/tms/dev/supercollider/bells/fft/buffer2.scpv"\cf3 ), \cf4 Buffer\cf3 .read(s, \cf5 "/Users/tms/dev/supercollider/bells/fft/buffer3.scpv"\cf3 ), \cf4 Buffer\cf3 .read(s, \cf5 "/Users/tms/dev/supercollider/bells/fft/buffer4.scpv"\cf3 )];\
+\
+\cf2 //===============================end setup\cf3 \
+\
+\
+\cf2 //////////////////////////////////\cf3 \
+\cf2 // iterator(s) + Tdef combinations\cf3 \
+\
+\cf2 // #1\cf3 \
+\
+\cf2 // simplest iterator possible							// adjust as needed\cf3 \
+~iterateUnits = \cf4 Routine\cf3  \{ \cf4 |pair|\cf3 \
+	\cf4 var\cf3  next, counter = 0;\
+	loop \{\
+		next = ~mappedBySF_RelID[ pair[0][1] ][ pair[1][counter] ];\
+		pair = [next, pair[1]].yield;\
+		counter = (counter + 1) % pair[1].size;\
+	\}\
+\};\
+\cf2 // only Routine called = ~iterateUnits; rates, durs, and waits hard-coded\cf3 \
+(\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 , \{\
+	\cf4 var\cf3  currentUnitState, currentSynth, theunits = ~mappedBySF_RelID[0].keys.asArray.sort;\
+\
+	~iterateUnits.reset;\
+	currentUnitState = ~iterateUnits.next([~crps[\cf6 \\cutable\cf3 ][0], theunits]);\
+\
+	\cf5 "loop"\cf3 .postln;\
+	loop \{\
+\cf2 //		currentUnitState[0].postln;\cf3 \
+\cf2 //		currentUnitState[1].postln;\cf3 \
+\cf2 //		"=============================".postln;	\cf3 \
+		currentSynth = \cf4 Synth\cf3 (\cf6 \\pvplay\cf3 , [\
+			\cf6 \\pBuf\cf3 , ~savedSCPVs[currentUnitState[0][1]],\
+			\cf6 \\rate\cf3 , 0.3,								\cf2 // adjust as needed\cf3 \
+			\cf6 \\foffset\cf3 , ((currentUnitState[0][3] * 44.1) / 512).floor,\
+			\cf6 \\dur\cf3 , ((currentUnitState[0][4] * 0.001) / 0.2)	\cf2 // adjust as needed\cf3 \
+		]);\
+		((currentUnitState[0][4] * 0.001) / 0.2).wait;		\cf2 // adjust as needed or use ~iterateRhythms...\cf3 \
+\
+		currentUnitState = ~iterateUnits.next(currentUnitState);\
+	\};\
+	\cf5 "done"\cf3 .postln;\
+\});\
+)\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).play;\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).stop;\
+\
+\cf2 // #2\cf3 \
+\
+\cf2 // same as #1\cf3 \
+~iterateUnits = \cf4 Routine\cf3  \{ \cf4 |pair|\cf3 \
+	\cf4 var\cf3  next, counter = 0;\
+	loop \{\
+		next = ~mappedBySF_RelID[ pair[0][1] ][ pair[1][counter] ];\
+		pair = [next, pair[1]].yield;\
+		counter = (counter + 1) % pair[1].size;\
+	\}\
+\};\
+\cf2 // Tdef = same as #1, but with variables baseSfile and startUnit (which can only be changed on init/reset)\cf3 \
+(\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 , \{ \cf4 |evnt, startUnit=0, sf=0|\cf3  \cf2 // set only on init or reset!\cf3 \
+	\cf4 var\cf3  baseSFile = sf;\
+	\cf4 var\cf3  currentUnitState, currentSynth, theunits = ~mappedBySF_RelID[baseSFile].keys.asArray.sort;\
+	~iterateUnits.reset;\
+\
+	\cf2 // currentUnitState will always hold theunits (the base sound file), even when search returns another sfile's unit\cf3 \
+	currentUnitState = ~iterateUnits.next([~crps[\cf6 \\cutable\cf3 ][startUnit], theunits]);\
+\
+\cf2 //	currentUnitState[0].postln;\cf3 \
+\cf2 //	currentUnitState[1].postln;\cf3 \
+\cf2 //	"=============================".postln;	\cf3 \
+\
+	\cf5 "loop"\cf3 .postln;\
+	loop \{\
+		currentSynth = \cf4 Synth\cf3 (\cf6 \\pvplay\cf3 , [\
+			\cf6 \\pBuf\cf3 , ~savedSCPVs[currentUnitState[0][1]],\
+			\cf6 \\rate\cf3 , 0.3,	\
+			\cf6 \\foffset\cf3 , ((currentUnitState[0][3] * 44.1) / 512).floor,\
+			\cf6 \\dur\cf3 , ((currentUnitState[0][4] * 0.001) / 0.2)\
+		]);\
+		((currentUnitState[0][4] * 0.001) / 0.2).wait;\
+\
+		currentUnitState = ~iterateUnits.next(currentUnitState);\
+	\};\
+	\cf5 "done"\cf3 .postln;\
+\});\
+)\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).play;\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).stop;\
+\
+\cf2 // #3\cf3 \
+\
+\cf2 // simple incrementing iterator + random swaps (within hard-coded sfile context)\cf3 \
+~iterateUnits = \cf4 Routine\cf3  \{ \cf4 |pair|\cf3 \
+	\cf4 var\cf3  next, counter = 0;\
+	loop \{\
+		(0.75.coin).if \cf2 // 75% get next; 25% get from nnearest\cf3 \
+		\{\
+			next = ~mappedBySF_RelID[ pair[0][1] ][ pair[1][counter] ];\
+		\} \{ \
+			\cf5 "random"\cf3 .postln;\
+			next = ~nntree[~mappedBySF_RelID[ pair[0][1] ][ pair[1][counter] ][0]];\
+			(next != \cf4 nil\cf3 ).if\
+			\{\
+				next = ~crps[\cf6 \\cutable\cf3 ][next[0].choose];\
+			\} \{ \cf2 // fall back on next in order\cf3 \
+				next = ~mappedBySF_RelID[ pair[0][1] ][ pair[1][counter] ];\
+			\};\
+		\};\
+		[next, pair[1]].postln;\
+		pair = [next, pair[1]].yield;\
+		counter = (counter + 1) % pair[1].size;\
+	\}\
+\};\
+\cf2 // Tdef = same as #2\cf3 \
+(\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 , \{ \cf4 |evnt, startUnit=0, sf=0|\cf3  \cf2 // set only on init or reset!\cf3 \
+	\cf4 var\cf3  baseSFile = sf;\
+	\cf4 var\cf3  currentUnitState, currentSynth, theunits = ~mappedBySF_RelID[baseSFile].keys.asArray.sort;\
+	~iterateUnits.reset;\
+\
+	\cf2 // currentUnitState will always hold theunits (the base sound file), even when search returns another sfile's unit\cf3 \
+	currentUnitState = ~iterateUnits.next([~crps[\cf6 \\cutable\cf3 ][startUnit], theunits]);\
+\
+\cf2 //	currentUnitState[0].postln;\cf3 \
+\cf2 //	currentUnitState[1].postln;\cf3 \
+\cf2 //	"=============================".postln;	\cf3 \
+\
+	\cf5 "loop"\cf3 .postln;\
+	loop \{\
+		\
+\cf2 //		currentUnitState[0].postln;\cf3 \
+\cf2 //		currentUnitState[1].postln;\cf3 \
+\cf2 //		"=============================".postln;	\cf3 \
+		currentSynth = \cf4 Synth\cf3 (\cf6 \\pvplay\cf3 , [\
+			\cf6 \\pBuf\cf3 , ~savedSCPVs[currentUnitState[0][1]],\
+			\cf6 \\rate\cf3 , 0.3,	\
+			\cf6 \\foffset\cf3 , ((currentUnitState[0][3] * 44.1) / 512).floor,\
+			\cf6 \\dur\cf3 , ((currentUnitState[0][4] * 0.001) / 0.2)\
+		]);\
+		((currentUnitState[0][4] * 0.001) / 0.2).wait;\
+\
+		currentUnitState = ~iterateUnits.next(currentUnitState);\
+	\};\
+	\cf5 "done"\cf3 .postln;\
+\});\
+)\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).play;\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).stop;\
+\
+\cf2 // #4\cf3 \
+\
+\cf2 // simple incrementing iterator + random swaps (within hard-coded sfile context)\cf3 \
+~iterateUnits = \cf4 Routine\cf3  \{ \cf4 |pair|\cf3 \
+	\cf4 var\cf3  next, counter = 0;\
+	loop \{\
+		(0.8.coin).if \cf2 // 80% get-next; 20% get-from-nnearest\cf3 \
+		\{\
+\cf2 //			next = ~mappedBySF_RelID[ pair[0][1] ][ pair[1][counter] ];\cf3 \
+			next = ~mappedBySF_RelID[ pair[1].key ][ pair[1].value[counter] ];\
+		\} \{ \
+			\cf5 "random"\cf3 .postln;\
+			next = ~nntree[ \cf0 ~mappedBySF_RelID[ pair[1].key ][ pair[1].value[counter] ]\cf3 [0] ];\
+			(next != \cf4 nil\cf3 ).if\
+			\{\
+				next = ~crps[\cf6 \\cutable\cf3 ][next[0].choose];\
+			\} \{ \cf2 // fall back on next in order\cf3 \
+				next = \cf0 ~mappedBySF_RelID[ pair[1].key ][ pair[1].value[counter] ]\cf3 ;\
+			\};\
+		\};\
+		[next, pair[1]].postln;\
+		pair = [next, pair[1]].yield;\
+		counter = (counter + 1) % pair[1].value.size;\
+	\}\
+\};\
+\
+~cycleRates = \cf4 Pseq\cf3 ([0.2, 0.5, 0.1, 0.2, 0.05, 0.4], \cf4 inf\cf3 ).asStream;\
+\cf2 // Tdef = same as #2 & #3, but with a loop of rates served into the tdef\cf3 \
+(\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 , \{ \cf4 |evnt, startUnit=0, sf=0|\cf3  \cf2 // set only on init or reset!\cf3 \
+	\cf4 var\cf3  baseSFile = sf;\
+	\cf4 var\cf3  currentUnitState, currentSynth, theunits = ~mappedBySF_RelID[baseSFile].keys.asArray.sort;\
+	\cf4 var\cf3  rate;\
+	~iterateUnits.reset;\
+\
+	\cf2 // currentUnitState will always hold theunits (the base sound file), even when search returns another sfile's unit\cf3 \
+	currentUnitState = ~iterateUnits.next([theunits[startUnit], (sf -> theunits)]);\
+\
+\cf2 //	currentUnitState[0].postln;\cf3 \
+\cf2 //	currentUnitState[1].postln;\cf3 \
+\cf2 //	"=============================".postln;	\cf3 \
+\
+	\cf5 "loop"\cf3 .postln;\
+	loop \{\
+		rate = ~cycleRates.next;\
+		rate.postln;\
+\cf2 //		currentUnitState[0].postln;\cf3 \
+\cf2 //		currentUnitState[1].postln;\cf3 \
+\cf2 //		"=============================".postln;	\cf3 \
+		currentSynth = \cf4 Synth\cf3 (\cf6 \\pvplay\cf3 , [\
+			\cf6 \\pBuf\cf3 , ~savedSCPVs[currentUnitState[0][1]],\
+			\cf6 \\rate\cf3 , rate,	\
+			\cf6 \\foffset\cf3 , ((currentUnitState[0][3] * 44.1) / 512).floor,\
+			\cf6 \\dur\cf3 , ((currentUnitState[0][4] * 0.001) / rate)\
+		]);\
+		((currentUnitState[0][4] * 0.001) / rate).wait;\
+\
+		currentUnitState = ~iterateUnits.next(currentUnitState);\
+	\};\
+	\cf5 "done"\cf3 .postln;\
+\});\
+)\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).play;\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).stop;\
+\
+\
+\cf2 // #5\cf3 \
+\
+\cf2 // always search (same as random swaps)\cf3 \
+~searchUnits = \cf4 Routine\cf3  \{ \cf4 |currUnit|\cf3 \
+	\cf4 var\cf3  next, counter = 0;\
+	loop \{\
+		\cf5 "random"\cf3 .postln;\
+		next = ~nntree[~mappedBySF_RelID[ currUnit[1] ][ currUnit[2] ][0]];\
+		(next != \cf4 nil\cf3 ).if\
+		\{\
+			currUnit = ~crps[\cf6 \\cutable\cf3 ][next.choose];\
+		\} \{ \cf2 // fall back on next in order	@ a dead end\cf3 \
+			currUnit = ~mappedBySF_RelID[ currUnit[1] ][ ((currUnit[2] + 1) % ~mappedBySF_RelID[currUnit[1]].keys.asArray.sort) ];\
+		\};\
+		currUnit.postln;\
+		currUnit = currUnit.yield; \cf2 // now doesn't that look a bit strange?\cf3 \
+	\}\
+\};\
+\
+~cycleRates = \cf4 Pseq\cf3 ([0.02, 0.05, 0.1, 0.02, 0.05, 0.04], \cf4 inf\cf3 ).asStream;\
+\cf2 // Tdef = same as #2 & #3, but with a loop of rates served into the tdef\cf3 \
+(\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 , \{ \cf4 |evnt, startUnit=300, sf=0|\cf3  \cf2 // set only on init or reset!\cf3 \
+	\cf4 var\cf3  baseSFile = sf;\
+	\cf4 var\cf3  currentUnitState, currentSynth;\
+	\cf4 var\cf3  rate, dur;\
+	~searchUnits.reset;\
+\
+	\cf2 // currentUnitState will always hold theunits (the base sound file), even when search returns another sfile's unit\cf3 \
+	currentUnitState = ~searchUnits.next(~crps[\cf6 \\cutable\cf3 ][startUnit]);\
+\
+\cf2 //	currentUnitState[0].postln;\cf3 \
+\cf2 //	currentUnitState[1].postln;\cf3 \
+\cf2 //	"=============================".postln;	\cf3 \
+\
+	\cf5 "loop"\cf3 .postln;\
+	loop \{\
+		rate = ~cycleRates.next;\
+		rate.postln;\
+		dur = (currentUnitState[4] * 0.001);\
+\
+		currentSynth = \cf4 Synth\cf3 (\cf6 \\pvplay\cf3 , [\
+			\cf6 \\pBuf\cf3 , ~savedSCPVs[currentUnitState[1]],\
+			\cf6 \\rate\cf3 , rate,	\
+			\cf6 \\foffset\cf3 , ((currentUnitState[3] * 44.1) / 512).floor,\
+			\cf6 \\dur\cf3 , (dur / rate),\
+			\cf6 \\pan\cf3 , 1.0.sum3rand\
+		]);\
+		((dur / rate) - exprand(0.1, (dur / rate))).postln;\
+		((dur / rate) - exprand(0.1, (dur / rate))).wait;\
+\
+		currentUnitState = ~searchUnits.next(currentUnitState);\
+	\};\
+	\cf5 "done"\cf3 .postln;\
+\});\
+)\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).play;\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).stop;\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).reset;\
+\
+\
+\
+\cf2 // #5a\cf3 \
+\
+\cf2 // always search (same as random swaps)\cf3 \
+~searchUnits = \cf4 Routine\cf3  \{ \cf4 |currUnit|\cf3 \
+	\cf4 var\cf3  next, counter = 0;\
+	loop \{\
+		\cf5 "random"\cf3 .postln;\
+		next = ~nntree[~mappedBySF_RelID[ currUnit[1] ][ currUnit[2] ][0]];\
+		(next != \cf4 nil\cf3 ).if\
+		\{\
+			currUnit = ~crps[\cf6 \\cutable\cf3 ][next.choose];\
+		\} \{ \cf2 // fall back on next in order	@ a dead end\cf3 \
+			currUnit = ~mappedBySF_RelID[ currUnit[1] ][ ((currUnit[2] + 1) % ~mappedBySF_RelID[currUnit[1]].keys.asArray.sort) ];\
+		\};\
+		currUnit.postln;\
+		currUnit = currUnit.yield; \cf2 // now doesn't that look a bit strange?\cf3 \
+	\}\
+\};\
+\
+~cycleRates = \cf4 Pseq\cf3 ([0.02, 0.05, 0.1, 0.02, 0.04, 0.1], \cf4 inf\cf3 ).asStream;\
+\cf2 //(~chebyBuf != nil).if \{ ~chebyBuf.free \};\cf3 \
+\cf2 //~chebyBuf = Buffer.alloc(s, 1024, 1, \{|bfr| bfr.chebyMsg([7] ++ \{1.0.rand2.squared\}.dup(6))\});\cf3 \
+\cf2 // Tdef = same as #5, + chebychev distortion\cf3 \
+(\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 , \{ \cf4 |evnt, startUnit=300, sf=0|\cf3  \cf2 // set only on init or reset!\cf3 \
+	\cf4 var\cf3  baseSFile = sf;\
+	\cf4 var\cf3  currentUnitState, currentSynth;\
+	\cf4 var\cf3  rate, dur;\
+	~searchUnits.reset;\
+\
+	\cf2 // currentUnitState will always hold theunits (the base sound file), even when search returns another sfile's unit\cf3 \
+	currentUnitState = ~searchUnits.next(~crps[\cf6 \\cutable\cf3 ][startUnit]);\
+\
+\cf2 //	currentUnitState[0].postln;\cf3 \
+\cf2 //	currentUnitState[1].postln;\cf3 \
+\cf2 //	"=============================".postln;	\cf3 \
+\
+	\cf5 "loop"\cf3 .postln;\
+	loop \{\
+		rate = ~cycleRates.next;\
+		rate.postln;\
+		dur = (currentUnitState[4] * 0.001);\
+\
+		currentSynth = \cf4 Synth\cf3 (\cf6 \\pvplayD\cf3 , [\
+			\cf6 \\pBuf\cf3 , ~savedSCPVs[currentUnitState[1]],\
+			\cf6 \\rate\cf3 , rate,	\
+			\cf6 \\foffset\cf3 , ((currentUnitState[3] * 44.1) / 512).floor,\
+			\cf6 \\dur\cf3 , (dur / rate),\
+			\cf6 \\pan\cf3 , 1.0.sum3rand,\
+			\cf6 \\freq\cf3 , currentUnitState[5]\
+		]);\
+		((dur / rate) - exprand(0.1, (dur / rate))).postln;\
+		((dur / rate) - exprand(0.1, (dur / rate))).wait;\
+\
+		currentUnitState = ~searchUnits.next(currentUnitState);\
+	\};\
+	\cf5 "done"\cf3 .postln;\
+\});\
+)\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).reset;\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).play;\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).stop;\
+\
+\
+\cf2 //~chebyBuf.plot;\cf3 \
+\
+\
+\
+\cf2 // #6\cf3 \
+(\
+\cf2 // always search (same as random swaps)\cf3 \
+~searchUnits = \cf4 Routine\cf3  \{ \cf4 |pair|\cf3 \
+	\cf4 var\cf3  curr, nextcandidates, next, nextindex, counter = 0;\
+	loop \{\
+		\cf5 "random"\cf3 .postln;\
+		curr = \cf0 ~mappedBySF_RelID[ pair[1].key ][ pair[1].value[counter] ]\cf3 [0];\
+		\
+		nextcandidates = ~nntree[curr];\
+		\
+		nextindex = nextcandidates[1].normalizeSum.windex;\
+		next = nextcandidates[0][nextindex];\
+		\
+		~nntree[curr][1][nextindex] = (~nntree[curr][1][nextindex] - 0.04).max(0);\
+		~nntree[curr][0].postln;\
+		~nntree[curr][1].postln;\
+		\
+		(next != \cf4 nil\cf3 ).if\
+		\{\
+			\
+			next = ~crps[\cf6 \\cutable\cf3 ][next];\
+			\
+		\} \{ \cf2 // fall back on next in order	@ a dead end\cf3 \
+\cf0 			next = ~mappedBySF_RelID[ pair[1].key ][ pair[1].value[counter] ];\
+\cf3 		\};\
+\cf0 		[next, pair[1]].postln;\
+		pair = [next, pair[1]].yield;\
+		counter = (counter + 1) % pair[1].value.size;\
+\cf3 	\}\
+\};\
+)\
+\cf2 // Tdef = same as #5, but now using unitSamplers\cf3 \
+(\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 , \{ \cf4 |evnt, startUnit=333, sf=0|\cf3  \cf2 // set only on init or reset!\cf3 \
+	\cf4 var\cf3  baseSFile = sf;\
+	\cf4 var\cf3  currentUnitState, currentSynth;\
+	\cf4 var\cf3  dur, pwidth;\
+	~searchUnits.reset;\
+\
+	currentUnitState = ~searchUnits.next(~crps[\cf6 \\cutable\cf3 ][startUnit]);\
+\
+	\cf5 "loop"\cf3 .postln;\
+	loop \{\
+		dur = (currentUnitState[4] * 0.001);\
+		pwidth = 0.5.sum3rand;\
+\
+		currentSynth = \cf4 Synth\cf3 (\cf6 \\unitSamplerSD\cf3 , [\
+			\cf6 \\bufNumL\cf3 , ~crps[\cf6 \\sftable\cf3 ][ ~crps[\cf6 \\sfmap\cf3 ][ currentUnitState[1] ] ][\cf6 \\bfrL\cf3 ] ,\
+			\cf6 \\bufNumR\cf3 , ~crps[\cf6 \\sftable\cf3 ][ ~crps[\cf6 \\sfmap\cf3 ][ currentUnitState[1] ] ][\cf6 \\bfrR\cf3 ],\
+			\cf6 \\offset\cf3 , (currentUnitState[3] * 0.001),\
+			\cf6 \\dur\cf3 , dur,\
+			\cf6 \\panL\cf3 , (pwidth * -1), \cf6 \\panR\cf3 , pwidth,\
+			\cf6 \\attack\cf3 , 0.05, \cf6 \\release\cf3 , 0.1,\
+			\cf6 \\da\cf3 , 2\
+		]);\
+		\
+		(dur + exprand(0.001, (dur * 0.1))).postln;\
+		(dur + exprand(0.001, (dur * 0.1))).wait;\
+\
+		currentUnitState = ~searchUnits.next(currentUnitState);\
+	\};\
+	\cf5 "done"\cf3 .postln;\
+\});\
+)\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).reset;\
+~init_tree.value;\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).play;\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).stop;\
+\
+\
+\cf2 // #7\cf3 \
+\
+\cf2 // simple incrementing iterator + random swaps (#4 + #6)\cf3 \
+~iterateUnits2 = \cf4 Routine\cf3  \{ \cf4 |pair|\cf3 \
+	\cf4 var\cf3  curr, nextcandidates, next, nextindex, counter = 0;\
+	loop \{\
+		(0.8.coin).if \cf2 // 80% get-next; 20% get-from-nnearest\cf3 \
+		\{\
+			next = ~mappedBySF_RelID[ pair[0][1] ][ pair[1][counter] ];\
+		\} \{ \
+			\cf5 "random"\cf3 .postln;\
+\
+			curr = ~mappedBySF_RelID[ pair[0][1] ][ pair[0][2] ][0];\
+			\
+			nextcandidates = ~nntree[curr];\
+			\
+			nextindex = nextcandidates[1].normalizeSum.windex;\
+			next = nextcandidates[0][nextindex];\
+			\
+			~nntree[curr][1][nextindex] = (~nntree[curr][1][nextindex] - 0.04).max(0);\
+			\cf2 // renormalize here?\cf3 \
+			~nntree[curr][0].postln;\
+			~nntree[curr][1].postln;\
+\
+\
+			(next != \cf4 nil\cf3 ).if\
+			\{\
+				next = ~crps[\cf6 \\cutable\cf3 ][next];\
+			\} \{ \cf2 // fall back on next in order\cf3 \
+				next = ~mappedBySF_RelID[ pair[0][1] ][ pair[1][counter] ];\
+			\};\
+		\};\
+		[next, pair[1]].postln;\
+		pair = [next, pair[1]].yield;\
+		counter = (counter + 1) % pair[1].size;\
+	\}\
+\};\
+\cf2 // Tdef = same as #6, but now using iterateUnits2 (double argument)\cf3 \
+(\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 , \{ \cf4 |evnt, startUnit=0, sf=0|\cf3  \cf2 // set only on init or reset!\cf3 \
+	\cf4 var\cf3  baseSFile = sf;\
+	\cf4 var\cf3  currentUnitState, currentSynth, theunits = ~mappedBySF_RelID[baseSFile].keys.asArray.sort;\
+	\cf4 var\cf3  dur, pwidth;\
+	~iterateUnits2.reset;\
+\
+	currentUnitState = ~iterateUnits2.next([theunits[startUnit], theunits]);\
+\
+	\cf5 "loop"\cf3 .postln;\
+	loop \{\
+		dur = (currentUnitState[0][4] * 0.001);\
+		pwidth = 0.5.sum3rand;\
+\
+		currentSynth = \cf4 Synth\cf3 (\cf6 \\unitSamplerSD\cf3 , [\
+			\cf6 \\bufNumL\cf3 , ~crps[\cf6 \\sftable\cf3 ][ ~crps[\cf6 \\sfmap\cf3 ][ currentUnitState[0][1] ] ][\cf6 \\bfrL\cf3 ] ,\
+			\cf6 \\bufNumR\cf3 , ~crps[\cf6 \\sftable\cf3 ][ ~crps[\cf6 \\sfmap\cf3 ][ currentUnitState[0][1] ] ][\cf6 \\bfrR\cf3 ],\
+			\cf6 \\offset\cf3 , (currentUnitState[0][3] * 0.001),\
+			\cf6 \\dur\cf3 , dur,\
+			\cf6 \\panL\cf3 , (pwidth * -1), \cf6 \\panR\cf3 , pwidth,\
+			\cf6 \\attack\cf3 , 0.05, \cf6 \\release\cf3 , 0.1,\
+			\cf6 \\da\cf3 , 2\
+		]);\
+		\
+		(dur + exprand(0.001, (dur * 0.1))).postln;\
+		(dur + exprand(0.001, (dur * 0.1))).wait;\
+\
+		currentUnitState = ~iterateUnits2.next(currentUnitState);\
+	\};\
+	\cf5 "done"\cf3 .postln;\
+\});\
+)\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).reset;\
+~init_tree.value;\
+\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).play;\
+\cf4 Tdef\cf3 (\cf6 \\meta\cf3 ).stop;\
+\
+\
+\
+\cf4 Tdef\cf3 .all;\
+\cf4 Tdef\cf3 .clear.removeAll;\
+\
+s.queryAllNodes;\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\
+\cf2 //////////////////////////////////////////////////////////////////////////////////////////////\cf3 \
+\
+\cf2 //~init_synths = \{ \cf3 \
+\cf2 //	~freezers = [Synth.newPaused(\\pvplay, [\\pBuf, ~savedSCPVs[0], \\rate, 1, \\offset, 0, \\pan, 0]), Synth.newPaused(\\pvplay, [\\pBuf, ~savedSCPVs[0], \\rate, 1, \\offset, 0, \\pan, 0]), Synth.newPaused(\\pvplay, [\\pBuf, ~savedSCPVs[0], \\rate, 1, \\offset, 0, \\pan, 0]), Synth.newPaused(\\pvplay, [\\pBuf, ~savedSCPVs[0], \\rate, 1, \\offset, 0, \\pan, 0]), Synth.newPaused(\\pvplay, [\\pBuf, ~savedSCPVs[0], \\rate, 1, \\offset, 0, \\pan, 0]), Synth.newPaused(\\pvplay, [\\pBuf, ~savedSCPVs[0], \\rate, 1, \\offset, 0, \\pan, 0])];\cf3 \
+\cf2 //\};\cf3 \
+\
+\cf2 //~init_synths = \{ |num|\cf3 \
+\cf2 //	(~freezers == nil).if \{ ~freezers = nil ! num \};\cf3 \
+\cf2 //	~freezers = ~freezers.collect(\{ |slot|\cf3 \
+\cf2 //		slot.postln;\cf3 \
+\cf2 //		(slot != nil).if \{ slot.free \};\cf3 \
+\cf2 //		Synth.newPaused(\\pvplay, [\\pBuf, ~savedSCPVs[0], \\rate, 1, \\offset, 0, \\pan, 0]);\cf3 \
+\cf2 //	\});\cf3 \
+\cf2 //\};\cf3 \
+\
+\cf2 //~rotateSynths = Routine \{ // |sfnum|\cf3 \
+\cf2 //	var scnt = 0;\cf3 \
+\cf2 //	loop \{\cf3 \
+\cf2 ////		~freezers[scnt].postln;\cf3 \
+\cf2 ////		~freezers[scnt].set(\\pBuf, ~savedSCPVs[sfnum]);\cf3 \
+\cf2 //		~freezers[scnt].yield;\cf3 \
+\cf2 //		scnt = (scnt + 1) % ~freezers.size;\cf3 \
+\cf2 //	\}; \cf3 \
+\cf2 //\};\cf3 \
+\
+\cf2 //~revRotateSynths = Routine \{ |sfnum|\cf3 \
+\cf2 //	var scnt = 0;\cf3 \
+\cf2 //	loop \{\cf3 \
+\cf2 //		~freezers[scnt].postln;\cf3 \
+\cf2 //		~freezers[scnt].set(\\pBuf, ~savedSCPVs[sfnum]);\cf3 \
+\cf2 //		sfnum = ~freezers[scnt].yield;\cf3 \
+\cf2 //		scnt = (scnt - 1) % 8;\cf3 \
+\cf2 //	\}; \cf3 \
+\cf2 //\};\cf3 \
+\cf2 //Tdef(\\meta, \{\cf3 \
+\cf2 //	"atem".postln;\cf3 \
+\cf2 //	loop \{\cf3 \
+\cf2 //		~revRotateSynths.next([0,1,2].choose);\cf3 \
+\cf2 //		2.wait;\cf3 \
+\cf2 //	\};\cf3 \
+\cf2 //	"done".postln;\cf3 \
+\cf2 //\});\cf3 \
+\
+}

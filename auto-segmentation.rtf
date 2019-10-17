@@ -1,0 +1,49 @@
+{\rtf1\ansi\ansicpg1252\cocoartf1038\cocoasubrtf320
+{\fonttbl\f0\fnil\fcharset0 Monaco;}
+{\colortbl;\red255\green255\blue255;\red0\green115\blue0;\red0\green0\blue191;\red191\green0\blue0;
+}
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\ql\qnatural\pardirnatural
+
+\f0\fs18 \cf0 ~rawdbs = ~crps[\cf2 \\sfutable\cf0 ][~gui[\cf2 \\cf\cf0 ]][\cf2 \\rawdescrs\cf0 ].flop[2];\
+~size = ~rawdbs.size;\
+~avg = ~rawdbs[0];\
+~db0  = ~avg;\
+~thresh = 0.2;\
+~counter = 10;\
+\
+~cutter = ~rawdbs.collect(\{ \cf3 |db, frame|\cf0 \
+	\cf3 var\cf0  sw = ~rawdbs[frame.min(0)..frame], now;\
+	~avg = sw.sum / sw.size;\
+	now = ((db - ~db0).abs / ~avg).abs;\
+	~db0 = db;\
+	((now > ~thresh) && (~counter > 10)).if\
+	\{\
+		~counter = 0;\
+		frame\
+	\} \{ \
+		~counter = ~counter + 1;\
+		0\
+	\};\
+\});\
+\
+~cutter = ~cutter.reject(\{ \cf3 |elem|\cf0  elem == 0 \});\
+~cutter = ~cutter.putFirst(1);\
+\cf4 //~cutter = ~cutter ++ ~size;\cf0 \
+\
+~cntr = 0;\
+~cutter.doAdjacentPairs(\{ \cf3 |a,b|\cf0 \
+	\cf4 //([a,(b - a)] * (512 / 44.1)).postln;\cf0 \
+	(a != b).if \{ ~crps.addSoundFileUnit(~gui[\cf2 \\cf\cf0 ], ~cntr, [a,(b - a)] * (512 / 44.1)) \};\
+	~cntr = ~cntr + 1;\
+\});\
+\
+~crps.segmentUnits(~gui[\cf2 \\cf\cf0 ]);\
+\
+~crps.clearSoundFileUnits;\
+\
+~crps[\cf2 \\sfutable\cf0 ][~gui[\cf2 \\cf\cf0 ]][\cf2 \\units\cf0 ].size;\
+\
+~crps[\cf2 \\sfutable\cf0 ][~gui[\cf2 \\cf\cf0 ]][\cf2 \\units\cf0 ].do(\{ |unit| (unit[8] < 0.0021).if \{ unit[0].postln; \} \});\
+\
+~crps.removeSoundFIleUnit\
+}
